@@ -1,0 +1,117 @@
+---
+title: "FA2"
+author: "Espiritu, Joseph Raphael M."
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  github_document: default
+  html_document: default
+---
+
+Introduction
+
+This assignment analyzes CyTOF (Cytometry by Time-of-Flight) data, where each row represents a single cell and each column represents a protein marker. The objectives are to reshape the dataset into tidy format, compute summary statistics for each protein, and visualize the relationship between the median protein level and variability using a spread–location plot. Additional practice in data reshaping is demonstrated using a gymnastics dataset from the dcldata package.
+
+```{r echo = TRUE}
+library(tidyverse)
+# Read the CyTOF dataset
+# Rows correspond to cells
+# Columns correspond to protein markers
+cytof <- read_csv("cytof_one_experiment.csv")
+cytof
+```
+
+Reshape the Data Using pivot_longer
+
+The dataset is reshaped so that:
+
+One column gives the protein identity
+
+One column gives the amount of protein in a cell
+
+The resulting dataset has 50,000 × 35 = 1,750,000 rows
+
+```{r echo = TRUE}
+cytof_long <- cytof %>%
+  pivot_longer(
+    cols = everything(),   # all protein columns
+    names_to = "protein",  # protein identity
+    values_to = "amount"   # protein level
+  )
+cytof_long
+```
+
+Median and Median Absolute Deviation by Protein
+
+For each protein marker, the median expression level and the median absolute deviation (MAD) are computed.
+```{r echo = TRUE}
+cytof_summary <- cytof_long %>%
+  group_by(protein) %>%
+  summarise(
+    median = median(amount), # median protein level
+    mad = mad(amount)        # median absolute deviation
+  )
+cytof_summary
+```
+
+Spread–Location Plot
+
+A spread–location (S–L) plot is created with MAD on the x-axis and the median on the y-axis.
+
+```{r echo = TRUE}
+ggplot(
+  cytof_summary,
+  aes(x = mad, y = median)
+) +
+  geom_point() +
+  labs(
+    x = "Median Absolute Deviation (MAD)",
+    y = "Median Protein Level",
+    title = "Spread–Location Plot for CyTOF Proteins"
+  ) +
+  theme_classic()
+```
+
+Interpretation
+
+The spread–location plot shows that the amount of variability in protein expression changes depending on the typical (median) expression level of the protein. Proteins with very low median expression tend to have little variability, while proteins with higher median expression generally show more spread in their values. However, this increase in variability is not consistent across all proteins, and the relationship is not linear. Overall, the plot suggests that the variability of protein expression is not constant and depends on the level of expression.
+
+```{r echo = TRUE}
+# Install packages if needed
+#install.packages("remotes")
+library(remotes)
+remotes::install_github("dcl-docs/dcldata")
+library(dcldata)
+
+data(example_gymnastics_2)
+
+gym_tidy <- example_gymnastics_2 %>%
+  pivot_longer(
+    cols = -country,          # keep country as identifier
+    names_to = "event_year",  # combined event and year
+    values_to = "score"
+  ) %>%
+  separate(
+    event_year,
+    into = c("event", "year"), # split into event and year
+    sep = "_"
+  )
+gym_tidy
+```
+Reshape the Dataset
+
+The dataset is reshaped to contain columns for country, event, year, and score.
+
+Final Dataset Structure
+The resulting dataset contains the following variables:
+
+country
+event
+year
+score
+
+Each row represents a single country–event–year combination, satisfying tidy data principles.
+
+Conclusion
+
+This analysis demonstrated how to reshape high-dimensional biological data using pivot_longer, compute robust summary statistics using median and mad, and explore variability using a spread–location plot. Additional pivoting practice illustrated how compound column names can be separated into meaningful variables using pivot_longer and separate.
