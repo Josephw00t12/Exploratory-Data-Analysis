@@ -3,9 +3,9 @@ title: "FA3 Espiritu, Clores"
 author: "Espiritu, Joseph Raphael, Harneyyer, Clores"
 date: "2026-02-22"
 output:
-  github_document: default
   html_document:
     df_print: paged
+  github_document: default
 ---
 
 ```{r}
@@ -71,7 +71,7 @@ taxi_trimmed <- taxi_clean %>%
 set.seed(123)
 
 taxi_model <- taxi_trimmed %>%
-  sample_n(200000)
+  sample_n(1300000)
 
 # ---------------------------------------
 # 6️ Summary statistics (on modeling data)
@@ -134,18 +134,18 @@ Heteroskedasticity:
 Residual spread increases at higher fitted values, indicating non-constant variance.
 
 ```{r echo=TRUE}
+taxi_loess <- taxi_model %>% sample_n(100000)
+
 loess_model <- loess(total_amount ~ trip_distance,
-                     data = taxi_model,
+                     data = taxi_loess,
                      span = 0.3)
 
-ggplot(taxi_model,
+ggplot(taxi_loess,
        aes(trip_distance, total_amount)) +
   geom_point(alpha = 0.05) +
   geom_smooth(method = "lm", color = "blue", se = FALSE) +
   geom_smooth(method = "loess", color = "red", se = FALSE) +
   labs(title = "Linear vs Flexible (LOESS) Model")
-
-library(modelr)
 
 lm_rmse <- rmse(lm_model, taxi_model)
 loess_rmse <- rmse(loess_model, taxi_model)
@@ -168,12 +168,8 @@ top10 <- taxi_model %>%
 
 top10
 
-library(robustbase)
-
 robust_model <- lmrob(total_amount ~ trip_distance,
                       data = taxi_model)
-
-summary(robust_model)
 
 coef(lm_model)
 coef(robust_model)
