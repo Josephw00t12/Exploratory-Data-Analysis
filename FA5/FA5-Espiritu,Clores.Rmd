@@ -1,0 +1,260 @@
+---
+title: "FA5 EDA"
+author: "Espiritu, Joseph Raphael, Harneyyer, Clores"
+date: "2026-04-16"
+output:
+  github_document: default
+  html_document: default
+  pdf_document:
+    latex_engine: xelatex
+---
+
+## A. Data Preparation and Cleaning
+
+### a. Import necessary libraries  
+### b. Load dataset correctly  
+### c. Assign column names (if needed)  
+### d. Recode education into 5 categories  
+### e. Handle missing values  
+
+```{r echo=TRUE}
+# Load packages
+library(tidyverse)
+
+# Load dataset
+df <- read_csv("adult.csv")
+
+# Fix column names (if needed)
+colnames(df) <- c(
+  "age", "workclass", "fnlwgt", "education", "education_num",
+  "marital_status", "occupation", "relationship", "race", "sex",
+  "capital_gain", "capital_loss", "hours_per_week", "native_country", "income"
+)
+
+glimpse(df)
+
+df <- df %>%
+  mutate(across(where(is.character), ~na_if(., "?"))) %>%
+  drop_na()
+
+df <- df %>%
+  mutate(
+    education_grouped = case_when(
+      education %in% c("Preschool", "1st-4th", "5th-6th") ~ "Elementary",
+      education %in% c("7th-8th", "9th") ~ "Middle School",
+      education %in% c("10th", "11th", "12th", "HS-grad") ~ "High School",
+      education %in% c("Some-college", "Assoc-acdm", "Assoc-voc") ~ "College/Associate",
+      education %in% c("Bachelors", "Masters", "Doctorate", "Prof-school") ~ "Advanced",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Quick checks
+glimpse(df)
+table(df$education_grouped)
+sum(is.na(df$education_grouped))
+```
+
+## B. Contingency Table Construction  
+
+### a. Create contingency table using education_grouped vs income  
+### b. Add totals  
+### c. Compute row percentages  
+### d. Present in APA format  
+
+```{r echo=TRUE}
+# Contingency table (education_grouped vs income)
+table_counts <- table(df$education_grouped, df$income)
+table_counts
+
+# Add row and column totals
+table_with_totals <- addmargins(table_counts)
+table_with_totals
+
+# Row percentages
+row_percent <- prop.table(table_counts, margin = 1) * 100
+round(row_percent, 2)
+
+library(knitr)
+
+# Row percentages
+apa_percent <- round(prop.table(table_counts, 1) * 100, 1)
+
+# Combine counts + percentages
+combined <- matrix(
+  paste0(table_counts, " (", apa_percent, "%)"),
+  nrow = nrow(table_counts),
+  dimnames = dimnames(table_counts)
+)
+
+combined_df <- as.data.frame.matrix(combined)
+```
+
+```{r eval=FALSE}
+colnames(combined_df) <- c("≤ $50K", "> $50K")
+kable(combined_df)
+```
+**Table 1**  
+*Contingency Table of Education Level and Income*
+
+```{r echo=FALSE}
+colnames(combined_df) <- c("≤ $50K", "> $50K")
+kable(combined_df)
+```
+
+## C. Chi-Square Test of Independence  
+
+### a. Perform chi-square test  
+
+### b. Report results  
+- Chi-square statistic  
+- Degrees of freedom  
+- p-value  
+### c. State significance
+
+```{r echo=TRUE}
+chi_test <- chisq.test(table_counts)
+chi_test
+
+chi_test$statistic   # Chi-square statistic
+chi_test$parameter   # Degrees of freedom
+chi_test$p.value     # p-value
+```
+
+## D. Expected Frequencies & Residuals  
+
+### a. Compute expected frequencies  
+### b. Compute standardized residuals  
+### c. Present results in table form  
+
+```{r echo=TRUE}
+expected <- round(chi_test$expected, 2)
+expected
+
+residuals <- round(chi_test$stdres, 2)
+residuals
+```
+
+```{r eval=FALSE}
+colnames(expected) <- c("≤ $50K", "> $50K")
+kable(expected)
+colnames(residuals) <- c("≤ $50K", "> $50K")
+kable(residuals)
+```
+
+**Table 2**  
+*Expected Frequencies for Education Level and Income*
+
+```{r echo=FALSE}
+colnames(expected) <- c("≤ $50K", "> $50K")
+kable(expected)
+```
+
+*Note.* Expected counts assuming independence between education level and income.
+
+**Table 3**  
+*Standardized Residuals for Education Level and Income*
+
+```{r echo=FALSE}
+colnames(residuals) <- c("≤ $50K", "> $50K")
+kable(residuals)
+```
+
+*Note.* Residuals with absolute values greater than 1.96 indicate statistically significant deviations from expected frequencies.
+
+## E. Data Visualization  
+
+### a. Create heatmap of residuals  
+### b. Apply proper color scaling and labels  
+### c. Add annotations  
+### d. Include APA-style figure title and note
+
+```{r echo=TRUE}
+library(ggplot2)
+
+# Convert residuals to long format
+res_long <- as.data.frame(as.table(residuals))
+
+# Heatmap
+plotheat <- ggplot(res_long, aes(x = Var2, y = Var1, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Freq, 2))) +
+  scale_fill_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0
+  ) +
+  labs(
+    x = "Income",
+    y = "Education Level",
+    fill = "Std Residual"
+  ) +
+  theme_minimal()
+```
+
+```{r eval=FALSE}
+plotheat
+```
+**Figure 1**  
+*Heatmap of Standardized Residuals for Education Level and Income*
+
+```{r echo=FALSE}
+plotheat
+```
+
+*Note.* Red cells indicate higher-than-expected frequencies, while blue cells indicate lower-than-expected frequencies. Values greater than ±1.96 are statistically significant.
+
+## F. Interpretation and Insights  
+
+### a. Interpret chi-square results  
+
+### **Interpretation and Significance**
+
+A chi-square test of independence was conducted to examine whether there is a relationship between **education level** and **income category**.
+
+The results showed a **statistically significant association** between education level and income,  
+**χ²(4) = 3439.88, *p* < .001**.
+
+Since the p-value is far below the conventional significance level of 0.05, we **reject the null hypothesis**, which stated that education level and income are independent. This indicates that there is strong statistical evidence of a relationship between the two variables.
+
+The magnitude of the chi-square statistic is very large, suggesting that the observed differences between education groups are substantial and unlikely to have occurred by random chance. In practical terms, this means that income distribution varies significantly depending on education level.
+
+Specifically, individuals with higher levels of education are more likely to fall into the higher income category (**>50K**), while individuals with lower levels of education are disproportionately represented in the lower income category (**≤50K**). This pattern reflects a meaningful real-world relationship in which increased educational attainment is associated with higher earning potential.
+
+Overall, the findings demonstrate that **education level is a significant factor influencing income**, and the association between these variables is both statistically significant and practically meaningful.
+
+### b. Identify significant residuals (|z| > 1.96)  
+
+### **Interpretation of Expected Frequencies and Standardized Residuals**
+
+The expected frequencies represent the counts that would be anticipated if there were no association between education level and income. A comparison between the observed and expected frequencies reveals notable deviations across several education groups.
+
+To further examine these differences, standardized residuals were analyzed. Residual values greater than **±1.96** indicate statistically significant deviations from the expected counts.
+
+The results show several large residual values, indicating strong deviations from independence:
+
+- The **Advanced education group** shows a very large **negative residual (-56.50)** in the ≤50K category and a corresponding **positive residual (56.50)** in the >50K category. This indicates that significantly fewer individuals than expected earn ≤50K, and significantly more individuals than expected earn >50K in this group.
+  
+- The **High School group** also shows substantial deviations, with a large **positive residual (33.81)** in the ≤50K category and a **negative residual (-33.81)** in the >50K category. This suggests that individuals in this group are significantly overrepresented in the lower income category.
+
+- The **Middle School and Elementary groups** display similar patterns, with positive residuals in ≤50K and negative residuals in >50K, indicating that these groups are strongly associated with lower income levels.
+
+- The **College/Associate group** shows moderate but still statistically significant residuals, suggesting a transitional pattern between lower and higher income distributions.
+
+Overall, these residual patterns confirm that the significant chi-square result is driven by clear and systematic differences in income distribution across education levels. Higher education levels are associated with higher-than-expected representation in the >50K category, while lower education levels are associated with higher-than-expected representation in the ≤50K category.
+
+These findings reinforce the conclusion that **education level plays a critical role in shaping income outcomes**, and the relationship observed is both statistically significant and substantively meaningful.
+
+### c. Provide 2–3 key insights  
+
+### **Key Insights**
+
+1. **The relationship between education and income is both highly uneven and strongly driven by specific groups.**  
+   The exceptionally large residuals observed in the Advanced (±56.50) and High School (±33.81) categories indicate that these groups contribute disproportionately to the overall chi-square statistic. This demonstrates that the association is not uniformly distributed across all education levels but is instead dominated by certain groups with pronounced deviations from expected income patterns.
+
+2. **Education creates a structured and directional shift in income distribution, reflecting clear socioeconomic stratification.**  
+   Higher education levels are strongly associated with overrepresentation in the >50K income category, while lower education levels are concentrated in the ≤50K category. This consistent and mirrored pattern across groups indicates a systematic, non-random relationship in which education functions as a key factor separating individuals into distinct income segments.
+
+3. **The magnitude and pattern of residuals indicate a meaningful real-world effect, with a gradual transition across education levels.**  
+   The large residual values suggest that the relationship is not only statistically significant but also practically substantial. Additionally, intermediate groups such as College/Associate show moderate residuals, indicating a transition zone rather than a strict divide, where education incrementally increases the likelihood of higher income rather than guaranteeing it.
