@@ -1,0 +1,559 @@
+---
+title: "FA6"
+author: "Espiritu, Joseph Raphael"
+date: "2026-05-01"
+output:
+  github_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r echo=TRUE}
+
+# Install if needed
+# install.packages(c("tidyverse","tidymodels","nnet","GGally"))
+
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+
+# Load dataset
+df <- read_csv("customer_segmentation.csv")
+df <- df %>%
+  clean_names()
+# Preview
+colnames(df)
+glimpse(df)
+str(df)
+
+```
+
+### Data Exploration:
+
+```{r echo=TRUE}
+
+#Missing Values
+df %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Missing_Count")
+
+# Target Dist
+
+df %>%
+  count(customer_segment) %>%
+  ggplot(aes(x = customer_segment, y = n, fill = customer_segment)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5) +
+  coord_cartesian(ylim = c(3300, 3700)) +
+  labs(
+    title = "Customer Segment Distribution",
+    x = "Customer Segment",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Dist
+df %>%
+  pivot_longer(c(age, annual_income_k, average_spend_per_visit)) %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 25, fill = "steelblue", color = "white") +
+  facet_wrap(~name, scales = "free") +
+  labs(
+    title = "Distribution of Key Continuous Variables",
+    x = "Value",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+ggplot(df, aes(x = annual_income_k, fill = customer_segment)) +
+  geom_density(alpha = 0.4)
+
+df %>%
+  group_by(customer_segment) %>%
+  summarise(
+    mean_income = mean(annual_income_k),
+    mean_spend = mean(average_spend_per_visit)
+  )
+
+cor(df %>% select(age, annual_income_k, average_spend_per_visit))
+
+```
+
+### Data Preprocessing:
+
+```{r echo=TRUE}
+
+# Convert categorical variables into factors so R treats them as categories
+df <- df %>%
+  mutate(
+    customer_segment = factor(customer_segment),
+    gender = factor(gender),
+    product_category_purchased = factor(product_category_purchased)
+  )
+
+# Display structure of the dataset to verify variable types
+str(df)
+
+# Set seed for reproducibility so splits are consistent across runs
+set.seed(123)
+
+
+# Split data into 80% training and 20% testing while preserving class distribution
+split <- initial_split(df, prop = 0.8, strata = customer_segment)
+
+# Extract training dataset
+train <- training(split)
+
+# Extract testing dataset
+test  <- testing(split)
+
+# Check total number of rows in original dataset
+nrow(df)
+
+# Check number of rows in training set
+nrow(train)
+
+# Check number of rows in testing set
+nrow(test)
+
+# Verify class distribution in training set
+train %>% count(customer_segment)
+
+# Verify class distribution in testing set
+test %>% count(customer_segment)
+
+rec <- recipe(customer_segment ~ ., data = train) %>%
+  update_role(customer_id, new_role = "id") %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+# Create preprocessing recipe defining transformations for modeling
+rec <- recipe(customer_segment ~ ., data = train) %>%
+  update_role(customer_id, new_role = "id") %>%   # Mark ID column so it is not used as a predictor
+  step_dummy(all_nominal_predictors()) %>%        # Convert categorical predictors into dummy variables
+  step_normalize(all_numeric_predictors())        # Scale numeric predictors to mean 0 and standard deviation 1
+
+# Print recipe structure to review preprocessing steps
+rec
+
+# Summarize variables, roles, and types in the recipe
+summary(rec)
+
+# Prepare the recipe by estimating required parameters (means, SDs, levels)
+prep_rec <- prep(rec)
+
+# Apply preprocessing transformations to training data
+train_processed <- bake(prep_rec, new_data = train)
+
+# Apply same transformations to testing data
+test_processed  <- bake(prep_rec, new_data = test)
+
+# Remove customer_id column since it should not be used in modeling
+train_processed <- train_processed %>%
+  select(-customer_id)
+
+# Remove customer_id from testing data as well
+test_processed <- test_processed %>%
+  select(-customer_id)
+
+# Inspect structure of processed training data to confirm transformations
+glimpse(train_processed)
+
+# Check if customer_id column was successfully removed
+"customer_id" %in% colnames(train_processed)
+
+# Check summary statistics of scaled age variable (should be centered around 0)
+summary(train_processed$age)
+
+# View column names to confirm dummy variables and processed features
+colnames(train_processed)
+
+# Check for any remaining missing values in processed data
+colSums(is.na(train_processed))
+
+# Confirm target variable remains a factor after preprocessing
+class(train_processed$customer_segment)
+```
+
+### Model Building:
+
+```{r echo=TRUE}
+# Define a multinomial logistic regression model with no regularization (baseline model)
+model <- multinom_reg(penalty = 0, mixture = 0) %>%
+  set_engine("nnet") %>%                     # Use nnet as the underlying algorithm
+  set_mode("classification")                # Specify classification task
+
+# Create a workflow combining preprocessing (recipe) and the model
+wf <- workflow() %>%
+  add_recipe(rec) %>%                       # Attach preprocessing steps
+  add_model(model)                          # Attach model
+
+# View workflow structure
+wf
+
+# Fit the model using training data (recipe is applied internally)
+fit_model <- fit(wf, data = train)
+
+# View fitted model details
+fit_model
+
+# Generate predicted class labels for test data
+pred_class <- predict(fit_model, test)
+
+# Generate predicted probabilities for each class
+pred_prob <- predict(fit_model, test, type = "prob")
+
+# Combine test data, predicted class, and probabilities into one dataset
+pred <- bind_cols(test, pred_class, pred_prob)
+
+# View final prediction dataset
+pred
+
+# View column names for the predcition dataset
+colnames(pred)
+```
+
+### Model Evaluation:
+
+```{r echo=TRUE}
+
+# Compute overall performance metrics such as accuracy, precision, recall, and F1-score
+metrics(pred, truth = customer_segment, estimate = .pred_class)
+
+# Create a confusion matrix comparing predicted classes to actual classes
+cm <- conf_mat(pred, truth = customer_segment, estimate = .pred_class)
+
+# Display the confusion matrix in table form to observe correct and incorrect classifications
+cm
+
+# Visualize the confusion matrix as a heatmap for easier interpretation of classification patterns
+autoplot(cm, type = "heatmap")
+
+# Recompute performance metrics (useful if you want to explicitly display results again)
+metrics(pred, truth = customer_segment, estimate = .pred_class)
+
+# Compute multinomial log-loss using predicted probabilities for each class
+mn_log_loss(
+  pred,
+  truth = customer_segment,
+  `.pred_Budget Shopper`,     # Probability of Budget Shopper
+  `.pred_Premium Shopper`,    # Probability of Premium Shopper
+  `.pred_Regular Shopper`     # Probability of Regular Shopper
+)
+
+# Display detailed model summary including coefficients and standard errors
+summary(fit_model$fit$fit)
+
+# Extract model coefficients for each class to understand feature influence
+coef(fit_model$fit$fit)
+```
+
+### Refinement:
+
+```{r echo=TRUE}
+# Create a new preprocessing recipe including an interaction term between income and age
+rec2 <- recipe(customer_segment ~ ., data = train) %>%
+  update_role(customer_id, new_role = "id") %>%          # Mark customer_id as an identifier so it is excluded from modeling
+  step_interact(~ annual_income_k:age) %>%               # Create interaction feature capturing combined effect of income and age
+  step_dummy(all_nominal_predictors()) %>%               # Convert categorical predictors into numeric dummy variables
+  step_normalize(all_numeric_predictors())               # Standardize numeric predictors (mean = 0, sd = 1)
+
+# Define a multinomial logistic regression model with tunable regularization strength (penalty)
+model_tuned <- multinom_reg(penalty = tune(), mixture = 0) %>%
+  set_engine("nnet") %>%                                # Use nnet implementation for multinomial regression
+  set_mode("classification")                            # Specify classification task
+
+# Combine preprocessing (rec2) and model into a single workflow pipeline
+wf2 <- workflow() %>%
+  add_recipe(rec2) %>%                                  # Attach updated preprocessing steps
+  add_model(model_tuned)                                # Attach tunable model
+
+# Set seed to ensure reproducibility of cross-validation results
+set.seed(123)
+
+# Create 5-fold cross-validation splits while preserving class distribution
+folds <- vfold_cv(train, v = 5, strata = customer_segment)
+
+# Define a grid of penalty values to test (log scale from 10^-3 to 10^1)
+grid <- grid_regular(penalty(range = c(-3, 1)), levels = 5)
+
+# Perform hyperparameter tuning across folds using the defined grid and evaluate using accuracy
+tuned <- tune_grid(
+  wf2,
+  resamples = folds,                                    # Apply cross-validation
+  grid = grid,                                          # Test multiple penalty values
+  metrics = metric_set(accuracy)                        # Evaluate using classification accuracy
+)
+
+# Select the best-performing penalty value based on highest accuracy
+best_params <- select_best(tuned, metric = "accuracy")
+
+# View the optimal hyperparameter value selected from tuning
+best_params
+
+# Finalize workflow by inserting the best penalty value into the model
+final_wf <- finalize_workflow(wf2, best_params)
+
+# Fit the final optimized model using the full training dataset
+final_fit <- fit(final_wf, data = train)
+
+# Generate predictions and probabilities on the test dataset and combine into one dataset
+pred <- bind_cols(
+  test,
+  predict(final_fit, test),                              # Predicted class labels
+  predict(final_fit, test, type = "prob")                # Predicted class probabilities
+)
+
+# Evaluate final model accuracy by comparing predicted vs actual classes
+metrics(pred, truth = customer_segment, estimate = .pred_class)
+
+# Generate confusion matrix to assess classification performance across all classes
+cm2 <- conf_mat(pred, truth = customer_segment, estimate = .pred_class)
+
+# Visualize the confusion matrix as a heatmap for easier interpretation of classification patterns
+autoplot(cm2, type = "heatmap")
+```
+
+### Reportings:
+
+#### 1. Introduction
+
+  This analysis aims to predict customer segments (Budget, Regular, Premium) using demographic and behavioral features such as age, income, spending, and visit frequency. A multinomial logistic regression model was applied, followed by refinement and evaluation to assess predictive performance.
+  
+#### 2. Data Exploration  
+  Observations: ~10,000+ customers  
+  Target variable: customer_segment (3 classes)  
+  Predictors:  
+    Age  
+    Annual Income  
+    Average Spend per Visit  
+    Number of Visits  
+    Gender  
+    Product Category Purchased  
+    
+```{r echo=FALSE}
+str(df)
+
+df %>%
+  count(customer_segment) %>%
+  ggplot(aes(x = customer_segment, y = n, fill = customer_segment)) +
+  geom_col() +
+  geom_text(aes(label = n), vjust = -0.5) +
+  coord_cartesian(ylim = c(3300, 3700)) +
+  labs(
+    title = "Customer Segment Distribution",
+    x = "Customer Segment",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+Interpretation:  
+  Classes are balanced  
+  No class imbalance → model should not be biased  
+  
+```{r echo=FALSE}
+df %>%
+  pivot_longer(c(age, annual_income_k, average_spend_per_visit)) %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 25, fill = "steelblue", color = "white") +
+  facet_wrap(~name, scales = "free") +
+  labs(
+    title = "Distribution of Key Continuous Variables",
+    x = "Value",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+```
+
+Interpretation:  
+  Variables are reasonably distributed  
+  No extreme skewness  
+  Suitable for modeling after scaling  
+  
+```{r echo=FALSE}
+ggplot(df, aes(x = annual_income_k, fill = customer_segment)) +
+  geom_density(alpha = 0.4)
+
+df %>%
+  group_by(customer_segment) %>%
+  summarise(
+    mean_income = mean(annual_income_k),
+    mean_spend = mean(average_spend_per_visit)
+  )
+
+cor(df %>% select(age, annual_income_k, average_spend_per_visit))
+```
+
+### Important Observation:  
+  Heavy overlap between all segments  
+  No visible separation  
+  Features do not differentiate customer groups  
+  Means are nearly identical across groups  
+  No meaningful differences  
+  Very weak relationships between variables  
+  Low predictive structure  
+
+#### 3. Data Preprocessing
+
+  Prior to model development, the dataset underwent several preprocessing steps to ensure that variables were in an appropriate format for modeling and that the data was clean, consistent, and suitable for machine learning algorithms.  
+  
+  - **Handling Categorical Variables**: Categorical predictors  
+  This allows the modeling pipeline to correctly apply transformations such as dummy encoding.  
+  
+Train-Test Split  
+
+Training set (80%): Used to train the model  
+Testing set (20%): Used to evaluate model performance  
+
+Stratified sampling was applied based on customer_segment to preserve the original class distribution in both subsets.
+
+A random seed (set.seed(123)) was set to ensure reproducibility of the split.
+
+```{r echo=FALSE}
+# Check summary statistics of scaled age variable (should be centered around 0)
+summary(train_processed$age)
+
+# View column names to confirm dummy variables and processed features
+colnames(train_processed)
+
+# Check for any remaining missing values in processed data
+colSums(is.na(train_processed))
+
+# Confirm target variable remains a factor after preprocessing
+class(train_processed$customer_segment)
+```
+
+#### Data Validation Checks  
+
+  No missing values were present after preprocessing  
+  All predictors were numeric and properly scaled  
+  The target variable (customer_segment) remained a factor  
+  The dataset structure was consistent and model-ready
+  
+#### 4. Model Building and Evaluation
+
+  A multinomial logistic regression model was developed to predict customer segment membership (Budget, Regular, Premium). The model was implemented using the tidymodels framework with preprocessing steps applied through a workflow to ensure consistency and prevent data leakage.
+  
+```{r echo=FALSE}
+model <- multinom_reg(penalty = 0, mixture = 0) %>%
+  set_engine("nnet") %>%
+  set_mode("classification")
+
+wf <- workflow() %>%
+  add_recipe(rec) %>%
+  add_model(model)
+
+fit_model <- fit(wf, data = train)
+
+pred <- bind_cols(
+  test,
+  predict(fit_model, test),
+  predict(fit_model, test, type = "prob")
+)
+
+metrics(pred, truth = customer_segment, estimate = .pred_class)
+```
+
+  The multinomial logistic regression model achieved an overall accuracy of 34.5%. Given that the dataset contains three equally distributed classes, this performance is only marginally higher than random chance (approximately 33%).
+
+  The Kappa statistic was 0.0173, indicating that the model provides negligible improvement over chance-level classification. This suggests that the model has very limited predictive capability.
+  
+```{r echo=FALSE}
+cm <- conf_mat(pred, truth = customer_segment, estimate = .pred_class)
+autoplot(cm, type = "heatmap")
+```
+
+  The confusion matrix reveals substantial misclassification across all customer segments. While some correct classifications are observed along the diagonal, a large number of observations are incorrectly assigned to other classes.
+
+  Notably, each predicted class contains a similar distribution of true classes, indicating that the model fails to effectively distinguish between customer segments. This pattern suggests a lack of separability in the feature space.
+  
+```{r echo=FALSE}
+mn_log_loss(
+  pred,
+  truth = customer_segment,
+  `.pred_Budget Shopper`,
+  `.pred_Premium Shopper`,
+  `.pred_Regular Shopper`
+)
+```
+
+  The log-loss value of approximately 1.10 indicates poor probabilistic performance. This value is comparable to that of a random classifier, suggesting that the predicted probabilities are not well-calibrated and do not meaningfully reflect class membership.
+  
+#### Overall Interpretation of Model
+
+  The multinomial logistic regression model demonstrates poor performance across all evaluation metrics. The low accuracy and near-zero Kappa value indicate that the model is unable to capture meaningful relationships between the predictor variables and the target variable.
+
+  The confusion matrix further confirms that predictions are widely distributed across classes, with no clear pattern of correct classification. This indicates that the model is unable to form decision boundaries that effectively separate customer segments.
+  
+#### 5. Refinement Strategy and Analysis
+
+To improve model performance, two primary modifications were introduced:  
+
+Feature Interaction  
+An interaction term between annual income and age was added to capture potential combined effects on customer segmentation.  
+Hyperparameter Tuning  
+The regularization parameter (penalty) of the multinomial logistic regression model was tuned using 5-fold cross-validation to optimize model generalization and reduce overfitting.  
+
+```{r echo=FALSE}
+rec2 <- recipe(customer_segment ~ ., data = train) %>%
+  update_role(customer_id, new_role = "id") %>%
+  step_interact(~ annual_income_k:age) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+model_tuned <- multinom_reg(penalty = tune(), mixture = 0) %>%
+  set_engine("nnet") %>%
+  set_mode("classification")
+
+wf2 <- workflow() %>%
+  add_recipe(rec2) %>%
+  add_model(model_tuned)
+
+set.seed(123)
+folds <- vfold_cv(train, v = 5, strata = customer_segment)
+
+grid <- grid_regular(penalty(range = c(-3, 1)), levels = 5)
+
+tuned <- tune_grid(
+  wf2,
+  resamples = folds,
+  grid = grid,
+  metrics = metric_set(accuracy)
+)
+
+best_params <- select_best(tuned, metric = "accuracy")
+
+final_wf <- finalize_workflow(wf2, best_params)
+
+final_fit <- fit(final_wf, data = train)
+
+pred <- bind_cols(
+  test,
+  predict(final_fit, test),
+  predict(final_fit, test, type = "prob")
+)
+
+metrics(pred, truth = customer_segment, estimate = .pred_class)
+```
+
+  The refined multinomial logistic regression model achieved an accuracy of 33.4%, which is slightly lower than the baseline model (34.5%). The Kappa statistic decreased to approximately 0.001, indicating no meaningful improvement over chance-level classification.
+
+  These results suggest that the introduced interaction term and hyperparameter tuning did not enhance the model’s ability to correctly classify customer segments.
+  
+```{r echo=FALSE}
+# Generate confusion matrix to assess classification performance across all classes
+cm2 <- conf_mat(pred, truth = customer_segment, estimate = .pred_class)
+
+# Visualize the confusion matrix as a heatmap for easier interpretation of classification patterns
+autoplot(cm2, type = "heatmap")
+```
+
+  The confusion matrix for the refined model shows a similar pattern to the baseline model, with substantial misclassification across all customer segments. There is no significant improvement in the concentration of correct predictions along the diagonal, indicating that the model continues to struggle in distinguishing between classes.
+  
+### Analysis:
+  The lack of improvement after refinement indicates that the limitation lies not in model complexity or parameter tuning, but in the underlying data structure. Despite introducing interaction effects and optimizing regularization, the model remains unable to identify meaningful decision boundaries between customer segments.
+
+  The optimal penalty value selected during tuning was relatively high, suggesting that strong regularization was necessary to prevent overfitting. However, this also reduced the model’s flexibility, further limiting its predictive capability.
